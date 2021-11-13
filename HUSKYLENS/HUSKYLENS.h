@@ -13,11 +13,21 @@
  */
 
 #include "Arduino.h"
-#include "Wire.h"
+
+//#define WIRE 1
+
+#ifdef WIRE        
+  #include "Wire.h"
+#else  
+  #include <I2C_DMAC.h>
+#endif
+
 #include "HuskyLensProtocolCore.h"
 
 #ifndef _HUSKYLENS_H
 #define _HUSKYLENS_H
+
+#define HUSKY_ADDRESS 0x32
 
 ////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////
@@ -152,18 +162,26 @@ enum protocolAlgorithm
 
 typedef Protocol_t HUSKYLENSResult;
 
+
 class HUSKYLENS
 {
 private:
+
+#ifdef WIRE
     TwoWire *wire;
+#endif    
+
     Stream *stream;
     unsigned long timeOutDuration = 100;
     unsigned long timeOutTimer;
     int16_t currentIndex = 0;
     Protocol_t protocolCache;
 
+    uint8_t data[16];
+
     void protocolWrite(uint8_t *buffer, int length)
     {
+#ifdef WIRE
         if (wire)
         {
             wire->beginTransmission(0x32);
@@ -174,6 +192,11 @@ private:
         {
             stream->write(buffer, length);
         }
+#else
+        I2C.initWriteBytes(HUSKY_ADDRESS, buffer, length); 
+        I2C.write();
+        while(I2C.writeBusy);
+#endif 
     }
 
     void timerBegin()
@@ -188,6 +211,7 @@ private:
 
     bool protocolAvailable()
     {
+#ifdef WIRE   
         if (wire)
         {
             if (!wire->available())
@@ -214,7 +238,19 @@ private:
                 }
             }
         }
+#else
+      I2C.initReadBytes(HUSKY_ADDRESS, data, 16); 
+      I2C.read();
+      while(I2C.readBusy);   
 
+      for (int i = 0; i < 16; i++)
+      {
+          if (husky_lens_protocol_receive(data[i]))
+          {
+              return true;
+          }        
+      }        
+#endif
         return false;
     }
 
@@ -282,7 +318,7 @@ private:
 public:
     HUSKYLENS(/* args */)
     {
-        wire = NULL;
+        //wire = NULL;
         stream = NULL;
         resultDefault.command = -1;
         resultDefault.first = -1;
@@ -299,16 +335,31 @@ public:
     bool begin(Stream &streamInput)
     {
         stream = &streamInput;
+#ifdef WIRE        
         wire = NULL;
+#endif        
         return readKnock();
     }
 
+#ifdef WIRE        
     bool begin(TwoWire &streamInput)
     {
         stream = NULL;
         wire = &streamInput;
         return readKnock();
     }
+#else    
+
+    bool begin()
+    {
+        stream = NULL;
+
+        // Start I2C bus at 400kHz
+        I2C.begin(400000);  
+        
+        return readKnock();
+    }    
+#endif            
 
     void setTimeOutDuration(unsigned long timeOutDurationInput)
     {
@@ -985,7 +1036,28 @@ public:
     PROTOCOL_CREATE(ReturnBlock, FiveInt16, COMMAND_RETURN_BLOCK)
     PROTOCOL_CREATE(ReturnArrow, FiveInt16, COMMAND_RETURN_ARROW)
 
-    PROTOCOL_CREATE(RequestKnock, Command, COMMAND_REQUEST_KNOCK)
+    //PROTOCOL_CREATE(RequestKnock, Command, COMMAND_REQUEST_KNOCK)
+
+    // RS uitgeschreven
+    void protocolWriteRequestKnock(Protocol_t &protocol)
+    {                                                  
+        protocolWriteCommand(protocol, COMMAND_REQUEST_KNOCK);        
+    }                                                  
+    void protocolWriteRequestKnock()                   
+    {                                                  
+        Protocol_t protocol;                           
+        protocolWriteCommand(protocol, COMMAND_REQUEST_KNOCK);        
+    }                                                  
+    bool protocolReadRequestKnock(Protocol_t &protocol)
+    {                                                  
+        return protocolReadCommand(protocol, COMMAND_REQUEST_KNOCK);  
+    }                                                  
+    bool protocolReadRequestKnock()                    
+    {                                                  
+        Protocol_t protocol;                           
+        return protocolReadCommand(protocol, COMMAND_REQUEST_KNOCK);  
+    }
+    
     PROTOCOL_CREATE(RequestAlgorithm, OneInt16, COMMAND_REQUEST_ALGORITHM)
 
     PROTOCOL_CREATE(ReturnOK, Command, COMMAND_RETURN_OK)
